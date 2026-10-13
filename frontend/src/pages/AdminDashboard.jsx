@@ -16,12 +16,28 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import T from '../components/T';
 import { adminAPI } from '../services/api';
 import { getAssetBaseUrl } from '../utils/apiBase';
 
 const resolveFileUrl = (url) => {
   if (!url) return null;
-  return url.startsWith('http') ? url : `${getAssetBaseUrl()}${url}`;
+
+  // Current Cloudinary uploads are absolute URLs. Earlier local uploads were
+  // persisted as a Windows filesystem path (for example
+  // `C:\\...\\uploads\\verification\\document.jpg`), so normalize those records
+  // to the public upload route before displaying them.
+  if (/^https?:\/\//i.test(url)) return url;
+
+  const normalizedPath = url.replace(/\\/g, '/');
+  const uploadPathIndex = normalizedPath.toLowerCase().indexOf('/uploads/');
+  const publicPath = uploadPathIndex >= 0
+    ? normalizedPath.slice(uploadPathIndex)
+    : normalizedPath.startsWith('/')
+      ? normalizedPath
+      : `/${normalizedPath}`;
+
+  return `${getAssetBaseUrl()}${publicPath}`;
 };
 
 const formatDepartment = (value) => {
@@ -82,6 +98,7 @@ const AdminDashboard = () => {
   const [reviewType, setReviewType] = useState(null);
   const [verificationActionLoading, setVerificationActionLoading] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [documentPreviewFailed, setDocumentPreviewFailed] = useState(false);
 
   const tabs = [
     { id: 'citizens', label: 'Citizens', icon: Users, role: 'citizen' },
@@ -249,6 +266,7 @@ const AdminDashboard = () => {
     setReviewItem(item);
     setReviewType(type);
     setRejectionReason('');
+    setDocumentPreviewFailed(false);
   };
 
   const closeReviewModal = () => {
@@ -286,9 +304,9 @@ const AdminDashboard = () => {
       <div className="w-full space-y-6 px-0 sm:px-1">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-            <h1 className="text-2xl font-bold text-gray-900">System Administration</h1>
+            <h1 className="text-2xl font-bold text-gray-900"><T en="System Administration" /></h1>
             <p className="text-sm text-gray-500 mt-1 font-medium">
-              Manage platform members across the system.
+              <T en="Manage platform members across the system." />
             </p>
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl">
               {memberSummaryCards.map((card) => {
@@ -306,10 +324,10 @@ const AdminDashboard = () => {
                         </div>
                         <div className="min-w-0">
                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.18em]">
-                            Members
+                            <T en="Members" />
                           </p>
                           <p className="text-sm font-bold text-gray-900 truncate">
-                            {card.label}
+                            <T en={card.label} />
                           </p>
                         </div>
                       </div>
@@ -318,7 +336,7 @@ const AdminDashboard = () => {
                           {memberCounts[card.key]}
                         </p>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                          Live Count
+                          <T en="Live Count" />
                         </p>
                       </div>
                     </div>
@@ -343,7 +361,7 @@ const AdminDashboard = () => {
                 }`}
               >
                 <Icon size={18} />
-                {tab.label}
+                <T en={tab.label} />
               </button>
             );
           })}
@@ -354,7 +372,7 @@ const AdminDashboard = () => {
             <section className="space-y-4">
               <h2 className="text-sm font-bold text-teal-600 flex items-center gap-2 px-1 uppercase tracking-wider">
                 <UserCheck size={16} />
-                Pending Verification Requests
+                <T en="Pending Verification Requests" />
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {pendingVerifications.map((u) => (
@@ -374,7 +392,7 @@ const AdminDashboard = () => {
                       onClick={() => openReviewModal(u, 'citizen')}
                       className="bg-teal-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-teal-700 transition-all flex items-center gap-2"
                     >
-                      <Eye size={14} /> Review
+                      <Eye size={14} /> <T en="Review" />
                     </button>
                   </div>
                 ))}
@@ -386,7 +404,7 @@ const AdminDashboard = () => {
             <section className="space-y-4">
               <h2 className="text-sm font-bold text-amber-600 flex items-center gap-2 px-1 uppercase tracking-wider">
                 <ShieldCheck size={16} />
-                Pending Mayor Approvals
+                <T en="Pending Mayor Approvals" />
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {pendingMayors.map((u) => (
@@ -405,7 +423,7 @@ const AdminDashboard = () => {
                       onClick={() => openReviewModal(u, 'mayor')}
                       className="bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-amber-600 transition-all flex items-center gap-2"
                     >
-                      <Eye size={14} /> Review
+                      <Eye size={14} /> <T en="Review" />
                     </button>
                   </div>
                 ))}
@@ -417,7 +435,7 @@ const AdminDashboard = () => {
             <section className="space-y-4">
               <h2 className="text-sm font-bold text-blue-600 flex items-center gap-2 px-1 uppercase tracking-wider">
                 <Briefcase size={16} />
-                Pending Public Servant Approvals
+                <T en="Pending Public Servant Approvals" />
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {pendingServants.map((u) => (
@@ -440,7 +458,7 @@ const AdminDashboard = () => {
                       onClick={() => openReviewModal(u, 'servant')}
                       className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-2"
                     >
-                      <Eye size={14} /> Review
+                      <Eye size={14} /> <T en="Review" />
                     </button>
                   </div>
                 ))}
@@ -454,14 +472,14 @@ const AdminDashboard = () => {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                 <input
                   type="text"
-                  placeholder={`Search ${activeTab}...`}
+                  placeholder={`${<T en="Search" />} ${activeTab}...`}
                   className="w-full bg-gray-50 border-none rounded-2xl pl-12 pr-4 py-3 text-sm focus:ring-2 focus:ring-teal-400 outline-none"
                   value={searchTerm}
                   onChange={(e) => setSearchSearchTerm(e.target.value)}
                 />
               </div>
               <div className="bg-gray-50 px-4 py-2 rounded-xl text-xs font-bold text-gray-500 uppercase tracking-widest">
-                {users.length} Platform Members
+                {users.length} <T en="Platform Members" />
               </div>
             </div>
 
@@ -470,7 +488,7 @@ const AdminDashboard = () => {
                 <Loader2 size={32} className="animate-spin text-teal-500" />
               </div>
             ) : filteredUsers.length === 0 ? (
-              <div className="py-20 text-center text-gray-400 font-medium italic">No users found.</div>
+              <div className="py-20 text-center text-gray-400 font-medium italic"><T en="No users found." /></div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
@@ -544,10 +562,10 @@ const AdminDashboard = () => {
                   <div>
                     <h2 className="text-xl font-bold text-gray-900">
                       {reviewType === 'citizen'
-                        ? 'Review Identity Document'
+                        ? <T en="Review Identity Document" />
                         : reviewType === 'servant'
-                          ? 'Review Public Servant Request'
-                          : 'Review Mayor Request'}
+                          ? <T en="Review Public Servant Request" />
+                          : <T en="Review Mayor Request" />}
                     </h2>
                     <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">
                       {reviewItem.name} | {reviewType === 'citizen' ? reviewItem.verificationDoc?.docType : reviewItem.role}
@@ -569,8 +587,25 @@ const AdminDashboard = () => {
                             Open document in new tab
                           </a>
                         </div>
+                      ) : documentPreviewFailed || !fileUrl ? (
+                        <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl bg-slate-50 px-6 py-10 text-center">
+                          <Eye size={28} className="text-slate-400" />
+                          <p className="text-sm font-semibold text-slate-700">Document preview is unavailable</p>
+                          <p className="text-xs text-slate-500">The uploaded file could not be loaded from its saved location.</p>
+                          {fileUrl && (
+                            <a href={fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-teal-600 hover:text-teal-700">
+                              <ExternalLink size={16} />
+                              Try opening document
+                            </a>
+                          )}
+                        </div>
                       ) : (
-                        <img src={fileUrl} alt="Document" className="w-full h-auto rounded-xl" />
+                        <img
+                          src={fileUrl}
+                          alt="Document"
+                          onError={() => setDocumentPreviewFailed(true)}
+                          className="w-full h-auto rounded-xl"
+                        />
                       )}
                     </div>
                   </div>

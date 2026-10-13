@@ -1,19 +1,18 @@
 const multer = require('multer');
-const path = require('path');
-const { getUploadDir } = require('../utils/uploadPaths');
+const { randomUUID } = require('crypto');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('../config/cloudinary');
 
-// Storage configuration
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, getUploadDir('evidence'));
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+// Handles complaint photos, videos, and audio, plus emergency audio.
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'shomadhan/evidence',
+    resource_type: 'auto',
+    public_id: (req, file) => `${file.fieldname}-${req.user.id}-${randomUUID()}`,
   },
 });
 
-// File filter
 const fileFilter = (req, file, cb) => {
   const allowedMimeTypes = [
     'image/jpeg', 'image/png', 'image/webp',
@@ -21,7 +20,12 @@ const fileFilter = (req, file, cb) => {
     'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm'
   ];
 
-  if (allowedMimeTypes.includes(file.mimetype)) {
+  if (
+    allowedMimeTypes.includes(file.mimetype) ||
+    file.mimetype?.startsWith('image/') ||
+    file.mimetype?.startsWith('video/') ||
+    file.mimetype?.startsWith('audio/')
+  ) {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only images, videos, and audio are allowed.'), false);

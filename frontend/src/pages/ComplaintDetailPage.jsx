@@ -30,6 +30,7 @@ import VoiceMessagePlayer from "../components/VoiceMessagePlayer";
 import VerifiedBadge from "../components/VerifiedBadge";
 import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import { getAssetBaseUrl } from "../utils/apiBase";
+import { getDepartmentLabel } from "../constants/departments";
 
 // Fix Leaflet default icon
 const defaultIcon = L.icon({
@@ -63,29 +64,31 @@ const CATEGORY_LABEL = {
   Environment: "Environment",
   "Law Enforcement": "Law Enforcement",
   Other: "Other",
-  public_works: "Public Works",
+  civil_works: "Civil Works",
+  public_works: "Civil Works",
   water_authority: "Water Authority",
-  electricity: "Electricity Dept",
-  sanitation: "Sanitation Dept",
-  public_safety: "Public Safety Dept",
+  electricity: "Electricity Department",
+  sanitation: "Sanitation Department",
   animal_control: "Animal Control",
-  health: "Health Dept",
-  transport: "Transport Dept",
-  environment: "Environment Dept",
+  health: "Health Department",
+  transport: "Transport Department",
+  environment: "Environment Department",
   police: "Police Department",
+  fire_service: "Fire Service",
 };
 
 const DEPT_LABEL = {
-  public_works: "Public Works",
+  civil_works: "Civil Works",
+  public_works: "Civil Works",
   water_authority: "Water Authority",
-  electricity: "Electricity Dept",
-  sanitation: "Sanitation Dept",
-  public_safety: "Public Safety Dept",
+  electricity: "Electricity Department",
+  sanitation: "Sanitation Department",
   animal_control: "Animal Control",
-  health: "Health Dept",
-  transport: "Transport Dept",
-  environment: "Environment Dept",
+  health: "Health Department",
+  transport: "Transport Department",
+  environment: "Environment Department",
   police: "Police Department",
+  fire_service: "Fire Service",
 };
 
 // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -284,11 +287,19 @@ const ComplaintDetailPage = () => {
   const sCfg = STATUS_CONFIG[complaint.status] || STATUS_CONFIG.pending;
   const sla = getSlaInfo(complaint.slaDeadline, complaint.slaDurationHours);
   const isResolved = complaint.status === "resolved";
+  const isMayor = user?.role === "mayor";
   const headerBorder = isResolved ? "border-gray-200" : pCfg.border;
-  const evidence = complaint.evidence || [];
+  const evidence = Array.isArray(complaint.evidence) ? complaint.evidence : [];
+  const voiceDescriptionItem =
+    complaint.voiceDescription?.url || evidence.find(isVoiceDescription) || null;
+  const attachmentItems = evidence.filter((item) => {
+    const url = getEvidenceUrl(item);
+    return url && url !== getEvidenceUrl(voiceDescriptionItem);
+  });
   const timeline = complaint.history || [];
   const hasMap = complaint.latitude && complaint.longitude;
   const submitterAvatar = resolveAvatar(complaint.submittedBy?.avatar);
+  const departmentLabel = getDepartmentLabel(complaint.category);
 
   return (
     <DashboardLayout>
@@ -334,43 +345,74 @@ const ComplaintDetailPage = () => {
                 )}
               </div>
 
-              <button
-                onClick={handleVote}
-                disabled={complaint.canVote === false}
-                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border transition-all ${
-                  complaint.canVote === false
-                    ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
-                    : hasVoted
-                    ? "bg-teal-50 border-teal-300 text-teal-700"
-                    : "border-gray-200 text-gray-500 hover:bg-gray-50"
-                }`}
-                title={
-                  complaint.isOwnComplaint
-                    ? "You cannot vote on your own complaint"
-                    : isResolved || complaint.status === "rejected"
-                    ? "Closed complaints can no longer receive public support"
-                    : hasVoted
-                    ? "Remove vote"
-                    : "Show public support"
-                }
-              >
-                <ThumbsUp
-                  size={16}
-                  className={complaint.canVote === false ? "text-gray-300" : hasVoted ? "text-teal-600" : "text-gray-400"}
-                />
-                <span className="text-base font-bold leading-none">
-                  {voteCount}
-                </span>
-                <span className="text-[11px] text-gray-400 leading-none">
-                  <T en={isResolved || complaint.status === "rejected" ? "rejected" : "Upvotes"} />
-                </span>
-              </button>
+              {isMayor ? (
+                <div className="flex flex-col items-center gap-1 px-3 py-2">
+                  <span className="text-base font-bold leading-none text-gray-800">
+                    {voteCount}
+                  </span>
+                  <span className="text-[11px] text-gray-400 leading-none">
+                    public support
+                  </span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleVote}
+                  disabled={complaint.canVote === false}
+                  className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border transition-all ${
+                    complaint.canVote === false
+                      ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                      : hasVoted
+                      ? "bg-teal-50 border-teal-300 text-teal-700"
+                      : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                  }`}
+                  title={
+                    complaint.isOwnComplaint
+                      ? "You cannot vote on your own complaint"
+                      : isResolved || complaint.status === "rejected"
+                      ? "Closed complaints can no longer receive public support"
+                      : hasVoted
+                      ? "Remove vote"
+                      : "Show public support"
+                  }
+                >
+                  <ThumbsUp
+                    size={16}
+                    className={complaint.canVote === false ? "text-gray-300" : hasVoted ? "text-teal-600" : "text-gray-400"}
+                  />
+                  <span className="text-base font-bold leading-none">
+                    {voteCount}
+                  </span>
+                  <span className="text-[11px] text-gray-400 leading-none">
+                    <T en={isResolved || complaint.status === "rejected" ? "rejected" : "Upvotes"} />
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Title */}
             <h1 className="text-xl font-bold text-gray-900 mt-3 mb-2">
               {complaint.title}
             </h1>
+
+            {/* Prank Rejection Notice */}
+            {complaint.is_prank && complaint.status === "rejected" && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 flex gap-3">
+                <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-700 mb-1">
+                    Rejected by AI Prank Detection
+                  </p>
+                  <p className="text-sm text-red-600 leading-relaxed">
+                    This complaint was automatically flagged and rejected because it appears to be a prank, joke, or non-civic issue
+                    {complaint.ai_confidence_score > 0
+                      ? ` (AI Confidence: ${(complaint.ai_confidence_score * 100).toFixed(1)}%)`
+                      : ""
+                    }.
+                    If you believe this is a mistake, please resubmit with a more detailed and clear description.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Description */}
             {complaint.description && (
@@ -382,20 +424,6 @@ const ComplaintDetailPage = () => {
                   <p className="text-sm text-gray-700 leading-relaxed">
                     <T en={complaint.description} />
                   </p>
-                  
-                  {/* Inline Audio Player for Voice Description */}
-                  {evidence.filter(isVoiceDescription).map((url, i) => (
-                    <div key={`voice-${i}`} className="p-3 bg-teal-50 border border-teal-100 rounded-xl">
-                      <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                        <Activity size={10} />
-                        Voice Description Recording
-                      </p>
-                      <VoiceMessagePlayer 
-                        src={resolveUrl(url)} 
-                        className="!max-w-full !bg-white/80 backdrop-blur-sm shadow-none"
-                      />
-                    </div>
-                  ))}
                 </div>
               </div>
             )}
@@ -439,9 +467,7 @@ const ComplaintDetailPage = () => {
                   <Building2 size={13} className="text-gray-400" />
                   <T
                     en={
-                      DEPT_LABEL[complaint.department] ||
-                      complaint.department ||
-                      "â€”"
+                      departmentLabel || "N/A"
                     }
                   />
                 </p>
@@ -469,20 +495,19 @@ const ComplaintDetailPage = () => {
                     </div>
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all ${
-                          sla.isOverdue
+                        className={`h-full rounded-full transition-all ${sla.isOverdue
                             ? "bg-red-500"
                             : sla.hoursLeft <= 24
                               ? "bg-orange-500"
                               : "bg-teal-600"
-                        }`}
+                          }`}
                         style={{ width: `${sla.progress}%` }}
                       />
                     </div>
                   </>
                 ) : (
                   <p className="text-xs text-gray-400 italic">
-                    No resolution deadline assigned yet â€” department review
+                    No resolution deadline assigned yet - {departmentLabel} review
                     pending
                   </p>
                 )}
@@ -490,13 +515,25 @@ const ComplaintDetailPage = () => {
             )}
 
             {/* Attachments */}
-            {evidence.filter(url => !isVoiceDescription(url)).length > 0 && (
+            {(voiceDescriptionItem || attachmentItems.length > 0) && (
               <div>
                 <p className="text-sm font-semibold text-gray-700 mb-2">
-                  <T en="Attachments" /> ({evidence.filter(url => !isVoiceDescription(url)).length})
+                  <T en="Attachments" /> ({(voiceDescriptionItem ? 1 : 0) + attachmentItems.length})
                 </p>
                 <div className="flex gap-3 flex-wrap">
-                  {evidence.filter(url => !isVoiceDescription(url)).map((url, i) =>
+                  {voiceDescriptionItem && (
+                    <div className="min-w-[240px] max-w-[320px] rounded-xl border border-teal-100 bg-teal-50/70 p-3">
+                      <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                        <Mic size={10} />
+                        Voice Description Attachment
+                      </p>
+                      <VoiceMessagePlayer
+                        src={resolveUrl(voiceDescriptionItem)}
+                        className="!max-w-full !bg-white/80 backdrop-blur-sm shadow-none"
+                      />
+                    </div>
+                  )}
+                  {attachmentItems.map((url, i) =>
                     isVideo(url) ? (
                       <a
                         key={i}

@@ -22,6 +22,8 @@ import {
   ThumbsUp,
   AlertTriangle,
   Users,
+  FileText,
+  Voicemail
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -117,6 +119,8 @@ const ComplaintPage = () => {
   const [votingId, setVotingId] = useState(null);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const fileInputRef = useRef(null);
+  const [descriptionType, setDescriptionType] = useState('text');
+  const [descriptionAudioBlob, setDescriptionAudioBlob] = useState(null);
 
   // â”€â”€ Hooks that must be declared before any early return â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const setAddress = useCallback((address) => {
@@ -231,6 +235,21 @@ const ComplaintPage = () => {
                 }
               />
             </Link>
+
+            {/* Emergency notice */}
+            <div className="mt-6 flex items-center justify-center gap-2.5 rounded-xl border border-red-200 bg-red-50 px-5 py-3">
+              <AlertCircle size={17} className="text-red-500 flex-shrink-0" />
+              <p className="text-sm font-semibold text-red-600">
+                <T en="For emergencies, call" />{" "}
+                <a
+                  href="tel:999"
+                  className="text-red-700 underline underline-offset-2 font-black tracking-wide hover:text-red-800 transition-colors"
+                >
+                  999
+                </a>{" "}
+                <T en="immediately." />
+              </p>
+            </div>
           </motion.div>
         </div>
       </DashboardLayout>
@@ -258,6 +277,7 @@ const ComplaintPage = () => {
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         setAudioBlob(blob);
+        setDescriptionAudioBlob(blob);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -291,6 +311,7 @@ const ComplaintPage = () => {
 
   const deleteRecording = () => {
     setAudioBlob(null);
+    setDescriptionAudioBlob(null);
     setRecordingDuration(0);
   };
 
@@ -358,21 +379,47 @@ const ComplaintPage = () => {
   };
 
   const analyzeWithNLP = async () => {
-    if (!formData.title.trim() || (!formData.description.trim() && !audioBlob)) {
-      toast.error('Please enter title and description (or record audio) before analyzing');
+    const hasTitle = formData.title.trim().length > 0;
+    const hasTextDetails = descriptionType === 'text' && formData.description.trim().length > 0;
+    const hasVoiceForAnalysis = descriptionType === 'voice' && Boolean(audioBlob);
+
+    if (!hasTitle && !hasTextDetails && !hasVoiceForAnalysis) {
+      toast.error('Please enter a title, description, or record a voice message to analyze.');
       return;
     }
+
+    if (descriptionType === 'voice' && !hasVoiceForAnalysis) {
+      toast.error('Please record a voice message to analyze.');
+      return;
+    }
+
     setIsAnalyzing(true);
     setNlpSuggestion(null);
+
     try {
-      const textToAnalyze = formData.description.trim() || "Voice message description";
-      const response = await complaintAPI.analyze(formData.title, textToAnalyze);
+      const data = new FormData();
+      data.append('title', formData.title.trim());
+
+      if (descriptionType === 'text' && formData.description.trim()) {
+        data.append('description', formData.description.trim());
+      } else if (descriptionType === 'voice' && audioBlob) {
+        const audioFile = new File([audioBlob], `audio-to-analyze.webm`, { type: 'audio/webm' });
+        data.append('audio', audioFile);
+      }
+
+      const response = await complaintAPI.analyze(data);
       if (response.data.success) {
+        if (response.data.data.transcribedText) {
+          setFormData((prev) => ({ ...prev, description: response.data.data.transcribedText }));
+        }
         setNlpSuggestion(response.data.data);
-        toast.success("AI analysis complete!");
+        const modeMessage = response.data.data.analysisMode === 'title-only'
+          ? 'AI department suggestion is based on the title only because no text description was provided.'
+          : 'AI department analysis complete.';
+        toast.success(modeMessage);
       }
     } catch (error) {
-      toast.error("Analysis failed. Please try again.");
+      toast.error('Analysis failed. Please try again.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -403,10 +450,10 @@ const ComplaintPage = () => {
         prev.map((c) =>
           c._id === id
             ? {
-                ...c,
-                voteCount: res.data.voteCount,
-                _userVoted: res.data.voted,
-              }
+              ...c,
+              voteCount: res.data.voteCount,
+              _userVoted: res.data.voted,
+            }
             : c,
         ),
       );
@@ -421,7 +468,7 @@ const ComplaintPage = () => {
   const handleFileChange = (e) => {
     const selectedFiles = Array.from(e.target.files);
     const maxFiles = audioBlob ? 4 : 5;
-    
+
     if (files.length + selectedFiles.length > maxFiles) {
       toast.error(`Maximum ${maxFiles} additional files allowed when using voice message`);
       return;
@@ -452,46 +499,42 @@ const ComplaintPage = () => {
 
   const performSubmit = async () => {
     if (isAnalyzing) {
-      notifyAnalysisOngoing();
+      toast.error("Department analysis is ongoing. Please wait.");
       return;
     }
-
     if (!formData.category) return toast.error("Please select a department");
 
     setIsSubmitting(true);
     const data = new FormData();
     data.append('title', formData.title);
     data.append('category', formData.category);
-    
-    const finalDescription = audioBlob 
-      ? (formData.description ? `${formData.description} (Voice message attached)` : "Voice message attached")
-      : formData.description;
-    data.append('description', finalDescription);
-    
+    data.append('descriptionType', descriptionType);
     data.append('location', formData.location);
     data.append('isAnonymous', formData.isAnonymous);
     data.append('emergencyFlag', formData.emergencyFlag);
+
+    if (descriptionType === 'text') {
+      data.append('description', formData.description);
+    } else if (descriptionType === 'voice' && descriptionAudioBlob) {
+      data.append('description', formData.description || "[Voice Message Submitted]");
+      const audioFile = new File([descriptionAudioBlob], `voice-description-${Date.now()}.webm`, { type: 'audio/webm' });
+      data.append('voiceDescription', audioFile);
+    } else {
+      // Fallback for safety, though validation should prevent this
+      data.append('description', formData.description);
+    }
 
     if (mapPosition) {
       data.append("latitude", mapPosition[0]);
       data.append("longitude", mapPosition[1]);
     }
 
-    files.forEach((file) => {
-      data.append("evidence", file);
-    });
-
-    if (audioBlob) {
-      const audioFile = new File([audioBlob], `voice-description-${Date.now()}.webm`, { type: 'audio/webm' });
-      data.append('evidence', audioFile);
-    }
+    files.forEach((file) => data.append("evidence", file));
 
     try {
       const response = await complaintAPI.create(data);
+
       if (response.data.success) {
-        setSpamWarning(null);
-        setNlpSuggestion(null);
-        setShowSubmitConfirm(false);
         toast.success("Complaint submitted successfully!");
         setFormData({
           title: "",
@@ -504,26 +547,29 @@ const ComplaintPage = () => {
         setFiles([]);
         setPreviews([]);
         setAudioBlob(null);
+        setDescriptionAudioBlob(null);
+        setDescriptionType("text");
         setMapPosition(null);
+        setNlpSuggestion(null);
+        setSpamWarning(null);
+        setShowSubmitConfirm(false);
       }
     } catch (error) {
-      console.error("Submission error:", error);
       if (error.response?.status === 409 && error.response.data?.duplicate) {
         setSpamWarning(error.response.data.duplicate);
       } else {
-        toast.error(
-          error.response?.data?.message || "Failed to submit complaint",
-        );
+        toast.error(error.response?.data?.message || "Failed to submit complaint");
       }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.title.trim()) return toast.error('Please enter a complaint title');
-    if (!formData.description.trim() && !audioBlob) return toast.error('Please enter complaint details or record a voice message');
+    if (descriptionType === 'text' && !formData.description.trim()) return toast.error('Please enter complaint details');
+    if (descriptionType === 'voice' && !descriptionAudioBlob) return toast.error('Please record a voice message for the description');
     if (!formData.category) return toast.error('Please select a department');
     if (!formData.location.trim()) return toast.error('Please provide a complaint location');
     setShowSubmitConfirm(true);
@@ -547,20 +593,25 @@ const ComplaintPage = () => {
   const hasPinnedLocation = Boolean(mapPosition);
   const isSubmitBlocked = isSubmitting || isAnalyzing;
   const topSuggestions =
-    nlpSuggestion?.topCategories ||
-    (nlpSuggestion
-      ? [
+    nlpSuggestion?.topCategories?.length
+      ? nlpSuggestion.topCategories
+      : nlpSuggestion?.category && nlpSuggestion?.department && !nlpSuggestion?.needsManualReview
+        ? [
           {
             category: nlpSuggestion.category,
             confidence: nlpSuggestion.confidence,
             department: nlpSuggestion.department,
           },
         ]
-      : []);
+        : [];
+  const hasSuggestions = topSuggestions.length > 0;
+  const defaultNlpMessage =
+    nlpSuggestion?.manualReviewMessage ||
+    'No specific department keywords recognized. Please select the relevant department manually from the dropdown or provide more details in the title/voice recording.';
 
   return (
     <DashboardLayout>
-      <div className="w-full max-w-[1440px] mx-auto py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
+      <div className="w-full min-w-0 py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
         <motion.header
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
@@ -623,7 +674,7 @@ const ComplaintPage = () => {
           initial="hidden"
           animate="visible"
           onSubmit={handleSubmit}
-          className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start"
+          className="grid min-w-0 grid-cols-1 items-start gap-6 xl:grid-cols-12"
         >
           {/* â”€â”€â”€ Basic Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
           <div className="xl:col-span-12 bg-white rounded-[2rem] shadow-[0_22px_50px_-30px_rgba(15,23,42,0.28)] border border-white/80 ring-1 ring-slate-100 p-6 md:p-8 space-y-6">
@@ -641,7 +692,7 @@ const ComplaintPage = () => {
                 Routed to the right department
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6">
               <motion.div variants={itemVariants} className="space-y-2">
                 <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                   <T en="Complaint Title" />
@@ -695,112 +746,73 @@ const ComplaintPage = () => {
             </div>
 
             <motion.div variants={itemVariants} className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">
-                <T en="Detailed Description" />
-              </label>
-              
-              <div className="relative group">
-                {isRecording ? (
-                  <div className="flex items-center gap-4 p-5 bg-red-50 border-2 border-red-100 rounded-2xl shadow-inner min-h-[128px]">
-                    <div className="flex flex-col items-center justify-center gap-3 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-                        <span className="text-xl font-black text-red-600 tabular-nums tracking-wider">
-                          {formatDuration(recordingDuration)}
-                        </span>
-                      </div>
-                      
-                      {/* Animated Waveform */}
-                      <div className="flex items-end gap-1 h-8">
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                          <motion.div
-                            key={i}
-                            className="w-1 bg-red-400 rounded-full"
-                            animate={{ 
-                              height: [10, 24, 12, 30, 8][i % 5],
-                            }}
-                            transition={{ 
-                              duration: 0.5, 
-                              repeat: Infinity, 
-                              delay: i * 0.1,
-                              ease: "easeInOut" 
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          mediaRecorderRef.current?.stop();
-                          setIsRecording(false);
-                          clearInterval(timerRef.current);
-                          setAudioBlob(null);
-                          setRecordingDuration(0);
-                        }}
-                        className="p-3 rounded-xl bg-white text-slate-400 hover:text-red-500 transition-all shadow-sm border border-red-100"
-                        title="Cancel"
-                      >
-                        <X size={20} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={stopRecording}
-                        className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-all shadow-md shadow-red-500/20"
-                        title="Save"
-                      >
-                        <CheckCircle2 size={20} />
-                      </button>
-                    </div>
-                  </div>
-                ) : audioBlob ? (
-                  <div className="p-4 bg-teal-50 border-2 border-teal-100 rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center">
-                          <Mic size={16} className="text-teal-600" />
-                        </div>
-                        <span className="text-xs font-bold text-teal-700 uppercase tracking-wider">Voice Description</span>
-                      </div>
-                      <button 
-                        type="button" 
-                        onClick={deleteRecording}
-                        className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all"
-                        title="Remove"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                    <VoiceMessagePlayer 
-                      src={URL.createObjectURL(audioBlob)} 
-                      className="!max-w-full bg-white/80 backdrop-blur-sm border-teal-100/50 shadow-none"
-                    />
-                  </div>
-                ) : (
-                  <>
-                    <textarea
-                      required={!audioBlob}
-                      name="description"
-                      rows={4}
-                      value={formData.description}
-                      onChange={handleInputChange}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      placeholder="Explain the issue in detail or use the mic to record..."
-                      className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all outline-none resize-none shadow-sm placeholder:text-slate-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={startRecording}
-                      className="absolute bottom-3 right-3 p-2.5 rounded-full bg-slate-100 text-slate-500 hover:bg-teal-500 hover:text-white transition-all shadow-sm group"
-                      title="Record Voice"
-                    >
-                      <Mic size={20} className="group-hover:scale-110 transition-transform" />
-                    </button>
-                  </>
-                )}
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-gray-700">
+                  <T en="Detailed Description" />
+                </label>
+                <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 p-1">
+                  <button type="button" onClick={() => setDescriptionType('text')} className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all ${descriptionType === 'text' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500'}`}>
+                    <FileText size={14} /> Text
+                  </button>
+                  <button type="button" onClick={() => setDescriptionType('voice')} className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all ${descriptionType === 'voice' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500'}`}>
+                    <Voicemail size={14} /> Voice
+                  </button>
+                </div>
               </div>
+
+              {descriptionType === 'text' ? (
+                <SmartInputWrapper value={formData.description} onValueChange={(val) => setFormData(prev => ({ ...prev, description: val }))} onAudioRecorded={(audio) => setAudioBlob(audio)} context="civic complaint description">
+                  <textarea required name="description" rows={4} value={formData.description} onChange={handleInputChange} placeholder="Explain the issue in detail or use the mic to record..." className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all outline-none resize-none shadow-sm placeholder:text-slate-400" />
+                </SmartInputWrapper>
+              ) : (
+                <div className="relative group">
+                  {isRecording ? (
+                    <div className="flex items-center gap-4 p-5 bg-red-50 border-2 border-red-100 rounded-2xl shadow-inner min-h-[128px]">
+                      <div className="flex flex-col items-center justify-center gap-3 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                          <span className="text-xl font-black text-red-600 tabular-nums tracking-wider">
+                            {formatDuration(recordingDuration)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button type="button" onClick={stopRecording} className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-all shadow-md shadow-red-500/20" title="Save">
+                          <CheckCircle2 size={20} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : audioBlob ? (
+                    <div className="p-4 bg-teal-50 border-2 border-teal-100 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center">
+                            <Mic size={16} className="text-teal-600" />
+                          </div>
+                          <span className="text-xs font-bold text-teal-700 uppercase tracking-wider">Voice Description Attached</span>
+                        </div>
+                        <button type="button" onClick={deleteRecording} className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all" title="Remove">
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <VoiceMessagePlayer src={URL.createObjectURL(audioBlob)} className="!max-w-full bg-white/80 backdrop-blur-sm border-teal-100/50 shadow-none" />
+                    </div>
+                  ) : (
+                    <div className="min-h-[128px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center gap-4 text-center p-4">
+                      <div className="w-16 h-16 rounded-full bg-teal-50 flex items-center justify-center">
+                        <Mic size={32} className="text-teal-500" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-600">Record a voice message</p>
+                        <p className="text-sm text-slate-400 mt-1">Submit your complaint using a voice recording instead of typing.</p>
+                      </div>
+                      <button type="button" onClick={startRecording} className="px-5 py-2 rounded-full bg-teal-500 text-white font-bold text-sm hover:bg-teal-600 transition-all shadow-lg shadow-teal-500/20">
+                        Start Recording
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button
                 type="button"
@@ -850,40 +862,46 @@ const ComplaintPage = () => {
                     <Tag size={13} />
                     <T en="TOP SUGGESTED DEPARTMENTS" />
                   </div>
-                  {topSuggestions.map((item, idx) => (
-                    <div
-                      key={`${item.category}-${idx}`}
-                      className="bg-white rounded-xl p-4 border border-violet-100 flex items-center justify-between gap-4"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-bold text-violet-400">
-                          #{idx + 1}
-                        </span>
-                        <div>
-                          <span className="text-base font-bold text-gray-900">
-                            {getDepartmentLabel(item.category)}
+                  {hasSuggestions ? (
+                    topSuggestions.map((item, idx) => (
+                      <div
+                        key={`${item.category}-${idx}`}
+                        className="bg-white rounded-xl p-4 border border-violet-100 flex items-center justify-between gap-4"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-violet-400">
+                            #{idx + 1}
                           </span>
-                          <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-                            <Building2 size={11} />
-                            {item.department.name}
+                          <div>
+                            <span className="text-base font-bold text-gray-900">
+                              {getDepartmentLabel(item.category)}
+                            </span>
+                            <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
+                              <Building2 size={11} />
+                              {item.department?.name || getDepartmentLabel(item.category)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <span className="text-xs font-semibold text-violet-600">
+                            {Math.round(item.confidence * 100)}%
+                          </span>
+                          <div className="w-20 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                            <div
+                              className="h-full bg-violet-500 rounded-full transition-all"
+                              style={{
+                                width: `${Math.round(item.confidence * 100)}%`,
+                              }}
+                            />
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <span className="text-xs font-semibold text-violet-600">
-                          {Math.round(item.confidence * 100)}%
-                        </span>
-                        <div className="w-20 h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                          <div
-                            className="h-full bg-violet-500 rounded-full transition-all"
-                            style={{
-                              width: `${Math.round(item.confidence * 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
+                    ))
+                  ) : (
+                    <div className="bg-white rounded-xl p-4 border border-violet-100 text-xs text-gray-600">
+                      <T en={defaultNlpMessage} />
                     </div>
-                  ))}
+                  )}
                 </div>
 
                 {nlpSuggestion.keywords?.length > 0 && (
@@ -904,14 +922,16 @@ const ComplaintPage = () => {
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  onClick={applySuggestion}
-                  className="w-full py-2 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
-                >
-                  <CheckCircle2 size={16} />
-                  <T en="Apply Suggested Department" />
-                </button>
+                {hasSuggestions && (
+                  <button
+                    type="button"
+                    onClick={applySuggestion}
+                    className="w-full py-2 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 size={16} />
+                    <T en="Apply Suggested Department" />
+                  </button>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -1179,7 +1199,7 @@ const ComplaintPage = () => {
                                     color: c.priority === 'Critical' ? '#dc2626' : c.priority === 'High' ? '#ea580c' : c.priority === 'Medium' ? '#ca8a04' : '#16a34a',
                                   }}
                                 >
-                                  â€¢ {c.priority}
+                                  {c.priority}
                                 </span>
                                 <span className="text-[10px] text-slate-400 font-medium">{getDepartmentLabel(c.category)}</span>
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.status === 'in-progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{c.status}</span>
@@ -1196,19 +1216,18 @@ const ComplaintPage = () => {
                               type="button"
                               onClick={() => handleVote(c._id)}
                               disabled={votingId === c._id || c.canVote === false}
-                              className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border transition-all disabled:opacity-50 ${
-                                c.canVote === false
-                                  ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
-                                  : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
-                              }`}
+                              className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border transition-all disabled:opacity-50 ${c.canVote === false
+                                ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                }`}
                               title={
                                 c.isOwnComplaint
                                   ? 'You cannot vote on your own complaint'
                                   : c.canVote === false
-                                  ? 'Closed complaints can no longer receive public support'
-                                  : c._userVoted
-                                  ? 'Remove vote'
-                                  : 'Vote for this complaint'
+                                    ? 'Closed complaints can no longer receive public support'
+                                    : c._userVoted
+                                      ? 'Remove vote'
+                                      : 'Vote for this complaint'
                               }
                             >
                               {votingId === c._id ? (
@@ -1269,7 +1288,7 @@ const ComplaintPage = () => {
                         </button>
                       </div>
                       <span className="text-xs text-red-600 font-medium bg-red-100 px-2 py-1 rounded-full">
-                        {Math.round(spamWarning.similarity * 100)}% similar Â·{" "}
+                        {Math.round(spamWarning.similarity * 100)}% similar {" "}
                         {spamWarning.method}
                       </span>
                     </div>
@@ -1287,15 +1306,14 @@ const ComplaintPage = () => {
           </AnimatePresence>
 
           {/* â”€â”€â”€ Submit Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-          <motion.div variants={itemVariants} className="xl:col-span-12 pt-2">
+          <motion.div variants={itemVariants} className="min-w-0 pt-2 xl:col-span-12">
             <button
               type="submit"
               disabled={isSubmitBlocked}
-              className={`w-full py-4 rounded-[1.6rem] flex items-center justify-center gap-2 text-white font-bold text-lg shadow-[0_22px_45px_-20px_rgba(13,148,136,0.45)] transition-all ${
-                isSubmitBlocked
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-teal-500 via-cyan-500 to-blue-600 hover:scale-[1.01] active:scale-[0.99]"
-              }`}
+              className={`flex w-full min-w-0 items-center justify-center gap-2 rounded-[1.6rem] py-4 text-lg font-bold text-white shadow-[0_22px_45px_-20px_rgba(13,148,136,0.45)] transition-all ${isSubmitBlocked
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-gradient-to-r from-teal-500 via-cyan-500 to-blue-600 hover:scale-[1.01] active:scale-[0.99]"
+                }`}
             >
               {isSubmitting ? (
                 <>
@@ -1401,11 +1419,10 @@ const ComplaintPage = () => {
                           isAnonymous: !prev.isAnonymous,
                         }))
                       }
-                      className={`rounded-2xl border p-4 text-left transition-all min-w-0 ${
-                        formData.isAnonymous
-                          ? "border-teal-200 bg-teal-50 shadow-sm"
-                          : "border-gray-200 bg-gray-50 hover:border-teal-200 hover:bg-teal-50/60"
-                      }`}
+                      className={`rounded-2xl border p-4 text-left transition-all min-w-0 ${formData.isAnonymous
+                        ? "border-teal-200 bg-teal-50 shadow-sm"
+                        : "border-gray-200 bg-gray-50 hover:border-teal-200 hover:bg-teal-50/60"
+                        }`}
                     >
                       <div className="flex flex-col gap-3">
                         <div className="flex items-start justify-between gap-3">
@@ -1428,11 +1445,10 @@ const ComplaintPage = () => {
                             className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${formData.isAnonymous ? "bg-teal-500" : "bg-gray-200"}`}
                           >
                             <span
-                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
-                                formData.isAnonymous
-                                  ? "translate-x-5"
-                                  : "translate-x-0.5"
-                              }`}
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${formData.isAnonymous
+                                ? "translate-x-5"
+                                : "translate-x-0.5"
+                                }`}
                             />
                           </div>
                         </div>
@@ -1458,11 +1474,10 @@ const ComplaintPage = () => {
                           emergencyFlag: !prev.emergencyFlag,
                         }))
                       }
-                      className={`rounded-2xl border p-4 text-left transition-all min-w-0 ${
-                        formData.emergencyFlag
-                          ? "border-red-200 bg-red-50 shadow-sm"
-                          : "border-gray-200 bg-gray-50 hover:border-red-200 hover:bg-red-50/60"
-                      }`}
+                      className={`rounded-2xl border p-4 text-left transition-all min-w-0 ${formData.emergencyFlag
+                        ? "border-red-200 bg-red-50 shadow-sm"
+                        : "border-gray-200 bg-gray-50 hover:border-red-200 hover:bg-red-50/60"
+                        }`}
                     >
                       <div className="flex flex-col gap-3">
                         <div className="flex items-start justify-between gap-3">
@@ -1485,11 +1500,10 @@ const ComplaintPage = () => {
                             className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${formData.emergencyFlag ? "bg-red-500" : "bg-gray-200"}`}
                           >
                             <span
-                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
-                                formData.emergencyFlag
-                                  ? "translate-x-5"
-                                  : "translate-x-0.5"
-                              }`}
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${formData.emergencyFlag
+                                ? "translate-x-5"
+                                : "translate-x-0.5"
+                                }`}
                             />
                           </div>
                         </div>
@@ -1522,11 +1536,10 @@ const ComplaintPage = () => {
                     type="button"
                     onClick={performSubmit}
                     disabled={isSubmitBlocked}
-                    className={`sm:flex-1 py-3 rounded-2xl text-white font-semibold transition-all shadow-lg ${
-                      formData.emergencyFlag
-                        ? "bg-gradient-to-r from-red-500 to-orange-500 shadow-red-500/20 hover:scale-[1.01]"
-                        : "bg-gradient-to-r from-teal-500 to-blue-600 shadow-teal-500/20 hover:scale-[1.01]"
-                    } disabled:opacity-60 disabled:cursor-not-allowed`}
+                    className={`sm:flex-1 py-3 rounded-2xl text-white font-semibold transition-all shadow-lg ${formData.emergencyFlag
+                      ? "bg-gradient-to-r from-red-500 to-orange-500 shadow-red-500/20 hover:scale-[1.01]"
+                      : "bg-gradient-to-r from-teal-500 to-blue-600 shadow-teal-500/20 hover:scale-[1.01]"
+                      } disabled:opacity-60 disabled:cursor-not-allowed`}
                   >
                     {isSubmitting ? (
                       <span className="inline-flex items-center gap-2">

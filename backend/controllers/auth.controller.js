@@ -3,8 +3,24 @@ const crypto = require("crypto");
 const User = require("../models/User.model");
 const { getClientUrl } = require("../config/runtimeUrls");
 const { sendEmail } = require("../services/emailService");
+const { sendAdminNotification } = require("../services/notificationService");
 
 const clientUrl = getClientUrl();
+
+const notifyAdminsOfReviewRequest = async (user, reviewType) => {
+  const typeLabel =
+    reviewType === "department_officer"
+      ? "Public servant approval"
+      : reviewType === "mayor"
+        ? "Mayor approval"
+        : "Citizen verification";
+
+  await sendAdminNotification({
+    subject: `New ${typeLabel} Request`,
+    message: `${user.name} submitted a ${typeLabel.toLowerCase()} request and is waiting for admin review.`,
+    type: "warning",
+  });
+};
 
 const hasCurrentMonthlyBadge = (user, date = new Date()) => {
   const month = date.getMonth() + 1;
@@ -143,6 +159,10 @@ const register = async (req, res, next) => {
 
     const user = await User.create(userData);
 
+    if (user.role === "department_officer" || user.role === "mayor") {
+      await notifyAdminsOfReviewRequest(user, user.role);
+    }
+
     sendTokenResponse(user, 201, res);
   } catch (error) {
     next(error);
@@ -276,6 +296,13 @@ const changePassword = async (req, res, next) => {
 // ─── PUT /api/v1/auth/verify ──────────────────────────────────────────
 const verifyAccount = async (req, res, next) => {
   try {
+    if (req.user.role === "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Administrator accounts do not require identity verification.",
+      });
+    }
+
     const { docType, documentNumber } = req.body;
 
     if (!docType || !documentNumber) {
@@ -316,7 +343,7 @@ const verifyAccount = async (req, res, next) => {
     user.verificationDoc = {
       docType,
       documentNumber,
-      fileUrl: `/uploads/verification/${req.file.filename}`,
+      fileUrl: req.file.path,
       status: "pending",
       submittedAt: new Date(),
       verifiedAt: undefined,
@@ -326,6 +353,8 @@ const verifyAccount = async (req, res, next) => {
     // Ensure Mongoose detects the object change
     user.markModified("verificationDoc");
     await user.save();
+
+    await notifyAdminsOfReviewRequest(user, "citizen");
 
     res.json({
       success: true,
@@ -510,7 +539,7 @@ const updateAvatar = async (req, res, next) => {
         .json({ success: false, message: "No image file provided." });
     }
 
-    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const avatarUrl = req.file.path;
     await User.findByIdAndUpdate(req.user.id, { avatar: avatarUrl });
 
     res.json({
@@ -567,6 +596,13 @@ const updateAddress = async (req, res, next) => {
 // Endpoint for new OAuth users to complete verification
 const verifyOAuthAccount = async (req, res, next) => {
   try {
+    if (req.user.role === "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Administrator accounts do not require identity verification.",
+      });
+    }
+
     const { docType, documentNumber, phone } = req.body;
 
     if (!docType || !documentNumber) {
@@ -626,7 +662,7 @@ const verifyOAuthAccount = async (req, res, next) => {
     user.verificationDoc = {
       docType,
       documentNumber,
-      fileUrl: `/uploads/verification/${req.file.filename}`,
+      fileUrl: req.file.path,
       status: "pending",
       submittedAt: new Date(),
       verifiedAt: undefined,
@@ -635,6 +671,8 @@ const verifyOAuthAccount = async (req, res, next) => {
 
     user.markModified("verificationDoc");
     await user.save();
+
+    await notifyAdminsOfReviewRequest(user, "citizen");
 
     res.json({
       success: true,
